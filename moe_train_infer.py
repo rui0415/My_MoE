@@ -140,7 +140,7 @@ def build_mnist_loaders(cfg: TrainConfig) -> tuple[DataLoader, DataLoader]:
         test_ds = Subset(test_ds, list(range(min(cfg.max_test_samples, len(test_ds)))))
 
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=2)
-    test_loader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, num_workers=2)
+    test_loader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=2)
     return train_loader, test_loader
 
 
@@ -207,9 +207,10 @@ def infer(model: MoEClassifier, cfg: TrainConfig, device: torch.device, num_test
         return
 
     model.eval()
+    torch.seed()
 
     if cfg.dataset == "synthetic":
-        sample_x = torch.randn(num_test_samples, cfg.input_dim, device=device)
+        sample_x = torch.randn(num_test_samples, cfg.input_dim).to(device)
         sample_y = None
     else:
         _, test_loader = build_mnist_loaders(cfg)
