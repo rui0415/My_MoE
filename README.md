@@ -3,6 +3,17 @@
 PyTorchで実装したMixture of Experts (MoE) の学習・推論サンプルです。
 `conda`仮想環境を利用し、CUDA対応GPU上で実行します。
 
+## コード構成
+
+- `moe_train_infer.py`: 入口スクリプト
+- `moe_core/cli.py`: 引数解析と実行フロー
+- `moe_core/model.py`: MoE本体
+- `moe_core/data.py`: データセットと前処理
+- `moe_core/train.py`: 学習ループ
+- `moe_core/infer.py`: 推論、accuracy、routing可視化
+- `moe_core/checkpoint.py`: 保存と読込
+- `moe_core/visualization.py`: loss/accuracy と heatmap の保存
+
 ## 1. 環境構築（conda）
 
 ```bash
