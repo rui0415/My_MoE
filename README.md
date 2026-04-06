@@ -41,6 +41,7 @@ conda run -n moe-gpu python moe_train_infer.py \
 - 学習済み重みを保存
 - 重みを再読込して推論
 - 学習履歴CSVと学習曲線画像を保存
+- gate の load balancing loss で expert の偏りを抑制
 
 保存先デフォルト:
 - artifacts/train_history.csv
@@ -67,6 +68,12 @@ python moe_train_infer.py \
 
 ```bash
 python moe_train_infer.py --inference-only --checkpoint-path checkpoints/moe.pt
+```
+
+load balancing loss の重みを変える場合:
+
+```bash
+python moe_train_infer.py --dataset mnist --balance-loss-weight 0.05
 ```
 
 テスト時のサンプル数を指定する場合:

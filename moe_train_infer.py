@@ -26,6 +26,7 @@ class TrainConfig:
     max_train_samples: int = 0
     max_test_samples: int = 0
     routing_plot: str = "artifacts/digit_to_expert_routing.png"
+    balance_loss_weight: float = 0.01
 
 
 def plot_history(losses: list[float], accs: list[float], path: str) -> None:
@@ -126,7 +127,7 @@ class MoEClassifier(nn.Module):
             [Expert(input_dim, hidden_dim, output_dim) for _ in range(num_experts)]
         )
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         gate_logits = self.gate(x)
         gate_probs = F.softmax(gate_logits, dim=-1)
 
@@ -139,7 +140,9 @@ class MoEClassifier(nn.Module):
         # 各Expertの出力を重み付きで合成する dense MoE
         expert_outputs = torch.stack([expert(x) for expert in self.experts], dim=1)
         mixed_output = torch.sum(expert_outputs * gate_probs.unsqueeze(-1), dim=1)
-        return mixed_output, gate_probs
+        importance = gate_probs.mean(dim=0)
+        balance_loss = self.num_experts * torch.sum(importance * importance)
+        return mixed_output, gate_probs, balance_loss
 
 
 def build_synthetic_dataset(cfg: TrainConfig, device: torch.device) -> TensorDataset:
@@ -216,7 +219,7 @@ def collect_mnist_routing_stats(
             batch_x = batch_x[:remaining]
             batch_y = batch_y[:remaining]
 
-        logits, gate_probs = model(batch_x)
+        logits, gate_probs, _ = model(batch_x)
         expert_ids = torch.argmax(gate_probs, dim=1)
 
         for digit, expert_id in zip(batch_y.tolist(), expert_ids.tolist()):
@@ -250,8 +253,9 @@ def train(
             batch_y = batch_y.to(device)
 
             optimizer.zero_grad(set_to_none=True)
-            logits, _ = model(batch_x)
-            loss = criterion(logits, batch_y)
+            logits, gate_probs, balance_loss = model(batch_x)
+            task_loss = criterion(logits, batch_y)
+            loss = task_loss + cfg.balance_loss_weight * balance_loss
             loss.backward()
             optimizer.step()
 
@@ -298,7 +302,7 @@ def infer(model: MoEClassifier, cfg: TrainConfig, device: torch.device, num_test
         sample_x = torch.cat(batch_x_list, dim=0)[:num_test_samples]
         sample_y = torch.cat(batch_y_list, dim=0)[:num_test_samples]
 
-    logits, gate_probs = model(sample_x)
+    logits, gate_probs, _ = model(sample_x)
     pred = torch.argmax(logits, dim=1)
 
     print(f"inference predictions ({num_test_samples} samples):", pred.tolist())
@@ -328,6 +332,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--history-csv", type=str, default="artifacts/train_history.csv")
     parser.add_argument("--history-plot", type=str, default="artifacts/train_history.png")
     parser.add_argument("--routing-plot", type=str, default="artifacts/digit_to_expert_routing.png")
+    parser.add_argument("--balance-loss-weight", type=float, default=0.01)
     return parser.parse_args()
 
 
@@ -387,6 +392,7 @@ def main() -> None:
         max_train_samples=args.max_train_samples,
         max_test_samples=args.max_test_samples,
         routing_plot=args.routing_plot,
+        balance_loss_weight=args.balance_loss_weight,
     )
 
     if cfg.dataset == "mnist":
