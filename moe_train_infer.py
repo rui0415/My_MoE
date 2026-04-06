@@ -205,20 +205,37 @@ def train(
 def infer(model: MoEClassifier, cfg: TrainConfig, device: torch.device, num_test_samples: int = 8) -> None:
     if num_test_samples <= 0:
         return
-    
+
     model.eval()
 
     if cfg.dataset == "synthetic":
         sample_x = torch.randn(num_test_samples, cfg.input_dim, device=device)
+        sample_y = None
     else:
         _, test_loader = build_mnist_loaders(cfg)
-        sample_x, _ = next(iter(test_loader))
-        sample_x = preprocess_batch(sample_x[:num_test_samples], device)
+        batch_x_list: list[torch.Tensor] = []
+        batch_y_list: list[torch.Tensor] = []
+        collected = 0
+
+        for batch_x, batch_y in test_loader:
+            batch_x = preprocess_batch(batch_x, device)
+            batch_y = batch_y.to(device)
+            batch_x_list.append(batch_x)
+            batch_y_list.append(batch_y)
+            collected += batch_x.size(0)
+            if collected >= num_test_samples:
+                break
+
+        sample_x = torch.cat(batch_x_list, dim=0)[:num_test_samples]
+        sample_y = torch.cat(batch_y_list, dim=0)[:num_test_samples]
 
     logits, gate_probs = model(sample_x)
     pred = torch.argmax(logits, dim=1)
 
     print(f"inference predictions ({num_test_samples} samples):", pred.tolist())
+    if sample_y is not None:
+        inference_acc = (pred == sample_y).float().mean().item()
+        print(f"inference accuracy ({num_test_samples} samples): {inference_acc:.4f}")
     print("gate probs for first sample:", gate_probs[0].tolist())
 
 
