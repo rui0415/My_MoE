@@ -68,6 +68,13 @@ python moe_train_infer.py \
 python moe_train_infer.py --inference-only --checkpoint-path checkpoints/moe.pt
 ```
 
+テスト時のサンプル数を指定する場合:
+
+```bash
+python moe_train_infer.py --inference-only --checkpoint-path checkpoints/moe_mnist.pt \
+	--dataset mnist --num-test-samples 32
+```
+
 実行時にCUDA GPUが見つからない場合はエラー終了します。
 
 ## 5. 期待される出力例

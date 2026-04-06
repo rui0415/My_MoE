@@ -202,20 +202,23 @@ def train(
 
 
 @torch.no_grad()
-def infer(model: MoEClassifier, cfg: TrainConfig, device: torch.device) -> None:
+def infer(model: MoEClassifier, cfg: TrainConfig, device: torch.device, num_test_samples: int = 8) -> None:
+    if num_test_samples <= 0:
+        return
+    
     model.eval()
 
     if cfg.dataset == "synthetic":
-        sample_x = torch.randn(8, cfg.input_dim, device=device)
+        sample_x = torch.randn(num_test_samples, cfg.input_dim, device=device)
     else:
         _, test_loader = build_mnist_loaders(cfg)
         sample_x, _ = next(iter(test_loader))
-        sample_x = preprocess_batch(sample_x[:8], device)
+        sample_x = preprocess_batch(sample_x[:num_test_samples], device)
 
     logits, gate_probs = model(sample_x)
     pred = torch.argmax(logits, dim=1)
 
-    print("inference predictions:", pred.tolist())
+    print(f"inference predictions ({num_test_samples} samples):", pred.tolist())
     print("gate probs for first sample:", gate_probs[0].tolist())
 
 
@@ -229,6 +232,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--checkpoint-path", type=str, default="checkpoints/moe.pt")
     parser.add_argument("--inference-only", action="store_true")
+    parser.add_argument("--num-test-samples", type=int, default=8, help="Number of test samples for inference")
     parser.add_argument("--dataset", type=str, default="synthetic", choices=["synthetic", "mnist"])
     parser.add_argument("--data-dir", type=str, default="./data")
     parser.add_argument("--max-train-samples", type=int, default=0)
@@ -312,7 +316,7 @@ def main() -> None:
 
     if args.inference_only:
         model = load_model_from_checkpoint(args.checkpoint_path, device)
-        infer(model, cfg, device)
+        infer(model, cfg, device, num_test_samples=args.num_test_samples)
         return
 
     losses, accs = train(model, cfg, device)
@@ -320,7 +324,7 @@ def main() -> None:
     plot_history(losses, accs, args.history_plot)
     save_checkpoint(model, cfg, args.checkpoint_path)
     loaded_model = load_model_from_checkpoint(args.checkpoint_path, device)
-    infer(loaded_model, cfg, device)
+    infer(loaded_model, cfg, device, num_test_samples=args.num_test_samples)
 
 
 if __name__ == "__main__":
