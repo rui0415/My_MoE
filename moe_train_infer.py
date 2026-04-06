@@ -1,11 +1,13 @@
 import argparse
+import csv
 import os
 from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Subset, TensorDataset
+from torchvision import datasets, transforms
 
 
 @dataclass
@@ -19,6 +21,44 @@ class TrainConfig:
     lr: float = 1e-3
     num_samples: int = 8192
     top_k: int = 2
+    dataset: str = "synthetic"
+    data_dir: str = "./data"
+    max_train_samples: int = 0
+    max_test_samples: int = 0
+
+
+def plot_history(losses: list[float], accs: list[float], path: str) -> None:
+    import matplotlib.pyplot as plt
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    epochs = list(range(1, len(losses) + 1))
+
+    fig, ax1 = plt.subplots(figsize=(8, 5))
+    ax1.plot(epochs, losses, color="#cc5500", marker="o", label="loss")
+    ax1.set_xlabel("epoch")
+    ax1.set_ylabel("loss", color="#cc5500")
+    ax1.tick_params(axis="y", labelcolor="#cc5500")
+
+    ax2 = ax1.twinx()
+    ax2.plot(epochs, accs, color="#007a7a", marker="s", label="accuracy")
+    ax2.set_ylabel("accuracy", color="#007a7a")
+    ax2.tick_params(axis="y", labelcolor="#007a7a")
+
+    plt.title("MoE Training Curves")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print("history plot saved:", path)
+
+
+def save_history_csv(losses: list[float], accs: list[float], path: str) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["epoch", "loss", "acc"])
+        for i, (loss, acc) in enumerate(zip(losses, accs), start=1):
+            writer.writerow([i, f"{loss:.8f}", f"{acc:.8f}"])
+    print("history csv saved:", path)
 
 
 class Expert(nn.Module):
@@ -79,13 +119,58 @@ def build_synthetic_dataset(cfg: TrainConfig, device: torch.device) -> TensorDat
     return TensorDataset(x, y)
 
 
-def train(model: MoEClassifier, cfg: TrainConfig, device: torch.device) -> None:
-    dataset = build_synthetic_dataset(cfg, device)
-    loader = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True)
+def build_mnist_loaders(cfg: TrainConfig) -> tuple[DataLoader, DataLoader]:
+    transform = transforms.ToTensor()
+    train_ds = datasets.MNIST(
+        root=cfg.data_dir,
+        train=True,
+        download=True,
+        transform=transform,
+    )
+    test_ds = datasets.MNIST(
+        root=cfg.data_dir,
+        train=False,
+        download=True,
+        transform=transform,
+    )
+
+    if cfg.max_train_samples > 0:
+        train_ds = Subset(train_ds, list(range(min(cfg.max_train_samples, len(train_ds)))))
+    if cfg.max_test_samples > 0:
+        test_ds = Subset(test_ds, list(range(min(cfg.max_test_samples, len(test_ds)))))
+
+    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=2)
+    test_loader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, num_workers=2)
+    return train_loader, test_loader
+
+
+def build_train_loader(cfg: TrainConfig, device: torch.device) -> DataLoader:
+    if cfg.dataset == "synthetic":
+        dataset = build_synthetic_dataset(cfg, device)
+        return DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True)
+
+    train_loader, _ = build_mnist_loaders(cfg)
+    return train_loader
+
+
+def preprocess_batch(batch_x: torch.Tensor, device: torch.device) -> torch.Tensor:
+    if batch_x.dim() == 4:
+        batch_x = batch_x.flatten(start_dim=1)
+    return batch_x.to(device)
+
+
+def train(
+    model: MoEClassifier,
+    cfg: TrainConfig,
+    device: torch.device,
+) -> tuple[list[float], list[float]]:
+    loader = build_train_loader(cfg, device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr)
     criterion = nn.CrossEntropyLoss()
 
+    losses: list[float] = []
+    accs: list[float] = []
     model.train()
     for epoch in range(1, cfg.epochs + 1):
         total_loss = 0.0
@@ -93,6 +178,9 @@ def train(model: MoEClassifier, cfg: TrainConfig, device: torch.device) -> None:
         total_count = 0
 
         for batch_x, batch_y in loader:
+            batch_x = preprocess_batch(batch_x, device)
+            batch_y = batch_y.to(device)
+
             optimizer.zero_grad(set_to_none=True)
             logits, _ = model(batch_x)
             loss = criterion(logits, batch_y)
@@ -106,13 +194,24 @@ def train(model: MoEClassifier, cfg: TrainConfig, device: torch.device) -> None:
 
         avg_loss = total_loss / total_count
         avg_acc = total_correct / total_count
+        losses.append(avg_loss)
+        accs.append(avg_acc)
         print(f"epoch={epoch:02d} loss={avg_loss:.4f} acc={avg_acc:.4f}")
+
+    return losses, accs
 
 
 @torch.no_grad()
 def infer(model: MoEClassifier, cfg: TrainConfig, device: torch.device) -> None:
     model.eval()
-    sample_x = torch.randn(8, cfg.input_dim, device=device)
+
+    if cfg.dataset == "synthetic":
+        sample_x = torch.randn(8, cfg.input_dim, device=device)
+    else:
+        _, test_loader = build_mnist_loaders(cfg)
+        sample_x, _ = next(iter(test_loader))
+        sample_x = preprocess_batch(sample_x[:8], device)
+
     logits, gate_probs = model(sample_x)
     pred = torch.argmax(logits, dim=1)
 
@@ -130,6 +229,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--checkpoint-path", type=str, default="checkpoints/moe.pt")
     parser.add_argument("--inference-only", action="store_true")
+    parser.add_argument("--dataset", type=str, default="synthetic", choices=["synthetic", "mnist"])
+    parser.add_argument("--data-dir", type=str, default="./data")
+    parser.add_argument("--max-train-samples", type=int, default=0)
+    parser.add_argument("--max-test-samples", type=int, default=0)
+    parser.add_argument("--history-csv", type=str, default="artifacts/train_history.csv")
+    parser.add_argument("--history-plot", type=str, default="artifacts/train_history.png")
     return parser.parse_args()
 
 
@@ -144,6 +249,7 @@ def save_checkpoint(model: MoEClassifier, cfg: TrainConfig, path: str) -> None:
                 "output_dim": cfg.output_dim,
                 "num_experts": cfg.num_experts,
                 "top_k": cfg.top_k,
+                "dataset": cfg.dataset,
             },
         },
         path,
@@ -183,7 +289,15 @@ def main() -> None:
         lr=args.lr,
         num_experts=args.num_experts,
         top_k=args.top_k,
+        dataset=args.dataset,
+        data_dir=args.data_dir,
+        max_train_samples=args.max_train_samples,
+        max_test_samples=args.max_test_samples,
     )
+
+    if cfg.dataset == "mnist":
+        cfg.input_dim = 28 * 28
+        cfg.output_dim = 10
 
     if args.top_k <= 0 or args.top_k > args.num_experts:
         raise ValueError("--top-k は 1 以上かつ --num-experts 以下にしてください。")
@@ -201,7 +315,9 @@ def main() -> None:
         infer(model, cfg, device)
         return
 
-    train(model, cfg, device)
+    losses, accs = train(model, cfg, device)
+    save_history_csv(losses, accs, args.history_csv)
+    plot_history(losses, accs, args.history_plot)
     save_checkpoint(model, cfg, args.checkpoint_path)
     loaded_model = load_model_from_checkpoint(args.checkpoint_path, device)
     infer(loaded_model, cfg, device)
