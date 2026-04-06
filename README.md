@@ -75,7 +75,23 @@ python moe_train_infer.py \
 
 初回実行時は data ディレクトリへMNISTがダウンロードされます。
 
-## 4. 学習済み重みで推論のみ実行
+## 4. もう少し複雑なデータ(CIFAR-10)で学習
+
+```bash
+python moe_train_infer.py \
+	--dataset cifar10 \
+	--epochs 3 \
+	--batch-size 512 \
+	--num-experts 4 \
+	--top-k 2 \
+	--max-train-samples 8192 \
+	--max-test-samples 2048 \
+	--checkpoint-path checkpoints/moe_cifar10.pt
+```
+
+初回実行時は data ディレクトリへCIFAR-10がダウンロードされます。
+
+## 5. 学習済み重みで推論のみ実行
 
 ```bash
 python moe_train_infer.py --inference-only --checkpoint-path checkpoints/moe.pt
@@ -96,9 +112,9 @@ python moe_train_infer.py --inference-only --checkpoint-path checkpoints/moe_mni
 
 実行時にCUDA GPUが見つからない場合はエラー終了します。
 推論時のテストデータは毎回ランダムに選ばれます。
-MNIST推論時には、各digitがどのexpertに流れたかの heatmap も保存されます。
+MNIST/CIFAR-10推論時には、各クラスがどのexpertに流れたかの heatmap も保存されます。
 
-## 5. 期待される出力例
+## 6. 期待される出力例
 
 ```text
 using device: cuda NVIDIA ...

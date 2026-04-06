@@ -1,7 +1,7 @@
 import torch
 
 from .config import TrainConfig
-from .data import build_mnist_loaders, preprocess_batch
+from .data import build_classification_loaders, preprocess_batch
 from .model import MoEClassifier
 from .visualization import save_digit_routing_heatmap
 
@@ -12,7 +12,7 @@ def collect_mnist_routing_stats(
     device: torch.device,
     num_test_samples: int,
 ) -> torch.Tensor:
-    _, test_loader = build_mnist_loaders(cfg)
+    _, test_loader = build_classification_loaders(cfg)
     routing_counts = torch.zeros(cfg.output_dim, model.num_experts, device=device)
     collected = 0
 
@@ -51,7 +51,7 @@ def infer(model: MoEClassifier, cfg: TrainConfig, device: torch.device, num_test
         sample_x = torch.randn(num_test_samples, cfg.input_dim).to(device)
         sample_y = None
     else:
-        _, test_loader = build_mnist_loaders(cfg)
+        _, test_loader = build_classification_loaders(cfg)
         batch_x_list: list[torch.Tensor] = []
         batch_y_list: list[torch.Tensor] = []
         collected = 0

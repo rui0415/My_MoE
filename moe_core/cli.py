@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-path", type=str, default="checkpoints/moe.pt")
     parser.add_argument("--inference-only", action="store_true")
     parser.add_argument("--num-test-samples", type=int, default=8, help="Number of test samples for inference")
-    parser.add_argument("--dataset", type=str, default="synthetic", choices=["synthetic", "mnist"])
+    parser.add_argument("--dataset", type=str, default="synthetic", choices=["synthetic", "mnist", "cifar10"])
     parser.add_argument("--data-dir", type=str, default="./data")
     parser.add_argument("--max-train-samples", type=int, default=0)
     parser.add_argument("--max-test-samples", type=int, default=0)
@@ -59,6 +59,9 @@ def main() -> None:
 
     if cfg.dataset == "mnist":
         cfg.input_dim = 28 * 28
+        cfg.output_dim = 10
+    elif cfg.dataset == "cifar10":
+        cfg.input_dim = 32 * 32 * 3
         cfg.output_dim = 10
 
     if args.top_k <= 0 or args.top_k > args.num_experts:
