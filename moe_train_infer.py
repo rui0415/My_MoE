@@ -25,6 +25,7 @@ class TrainConfig:
     data_dir: str = "./data"
     max_train_samples: int = 0
     max_test_samples: int = 0
+    routing_plot: str = "artifacts/digit_to_expert_routing.png"
 
 
 def plot_history(losses: list[float], accs: list[float], path: str) -> None:
@@ -59,6 +60,40 @@ def save_history_csv(losses: list[float], accs: list[float], path: str) -> None:
         for i, (loss, acc) in enumerate(zip(losses, accs), start=1):
             writer.writerow([i, f"{loss:.8f}", f"{acc:.8f}"])
     print("history csv saved:", path)
+
+
+def save_digit_routing_heatmap(
+    routing_counts: torch.Tensor,
+    path: str,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+    counts = routing_counts.detach().cpu().float()
+    row_sums = counts.sum(dim=1, keepdim=True).clamp_min(1.0)
+    routing_ratios = counts / row_sums
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    image = ax.imshow(routing_ratios.numpy(), cmap="viridis", aspect="auto")
+
+    ax.set_xlabel("expert")
+    ax.set_ylabel("digit")
+    ax.set_xticks(range(counts.size(1)))
+    ax.set_yticks(range(counts.size(0)))
+    ax.set_yticklabels([str(i) for i in range(counts.size(0))])
+    ax.set_title("Digit to Expert Routing Ratio")
+    fig.colorbar(image, ax=ax, label="routing ratio")
+
+    for digit in range(counts.size(0)):
+        for expert in range(counts.size(1)):
+            value = routing_ratios[digit, expert].item()
+            ax.text(expert, digit, f"{value:.2f}", ha="center", va="center", color="white" if value > 0.5 else "black")
+
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print("routing heatmap saved:", path)
 
 
 class Expert(nn.Module):
@@ -159,6 +194,39 @@ def preprocess_batch(batch_x: torch.Tensor, device: torch.device) -> torch.Tenso
     return batch_x.to(device)
 
 
+def collect_mnist_routing_stats(
+    model: MoEClassifier,
+    cfg: TrainConfig,
+    device: torch.device,
+    num_test_samples: int,
+) -> torch.Tensor:
+    _, test_loader = build_mnist_loaders(cfg)
+    routing_counts = torch.zeros(cfg.output_dim, model.num_experts, device=device)
+    collected = 0
+
+    for batch_x, batch_y in test_loader:
+        batch_x = preprocess_batch(batch_x, device)
+        batch_y = batch_y.to(device)
+
+        remaining = num_test_samples - collected
+        if remaining <= 0:
+            break
+
+        if batch_x.size(0) > remaining:
+            batch_x = batch_x[:remaining]
+            batch_y = batch_y[:remaining]
+
+        logits, gate_probs = model(batch_x)
+        expert_ids = torch.argmax(gate_probs, dim=1)
+
+        for digit, expert_id in zip(batch_y.tolist(), expert_ids.tolist()):
+            routing_counts[digit, expert_id] += 1
+
+        collected += batch_x.size(0)
+
+    return routing_counts
+
+
 def train(
     model: MoEClassifier,
     cfg: TrainConfig,
@@ -237,6 +305,8 @@ def infer(model: MoEClassifier, cfg: TrainConfig, device: torch.device, num_test
     if sample_y is not None:
         inference_acc = (pred == sample_y).float().mean().item()
         print(f"inference accuracy ({num_test_samples} samples): {inference_acc:.4f}")
+        routing_counts = collect_mnist_routing_stats(model, cfg, device, num_test_samples)
+        save_digit_routing_heatmap(routing_counts, cfg.routing_plot)
     print("gate probs for first sample:", gate_probs[0].tolist())
 
 
@@ -257,6 +327,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-test-samples", type=int, default=0)
     parser.add_argument("--history-csv", type=str, default="artifacts/train_history.csv")
     parser.add_argument("--history-plot", type=str, default="artifacts/train_history.png")
+    parser.add_argument("--routing-plot", type=str, default="artifacts/digit_to_expert_routing.png")
     return parser.parse_args()
 
 
@@ -315,6 +386,7 @@ def main() -> None:
         data_dir=args.data_dir,
         max_train_samples=args.max_train_samples,
         max_test_samples=args.max_test_samples,
+        routing_plot=args.routing_plot,
     )
 
     if cfg.dataset == "mnist":

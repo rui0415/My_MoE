@@ -45,6 +45,7 @@ conda run -n moe-gpu python moe_train_infer.py \
 保存先デフォルト:
 - artifacts/train_history.csv
 - artifacts/train_history.png
+- artifacts/digit_to_expert_routing.png
 
 ## 3. 実データセット(MNIST)で学習
 
@@ -77,6 +78,7 @@ python moe_train_infer.py --inference-only --checkpoint-path checkpoints/moe_mni
 
 実行時にCUDA GPUが見つからない場合はエラー終了します。
 推論時のテストデータは毎回ランダムに選ばれます。
+MNIST推論時には、各digitがどのexpertに流れたかの heatmap も保存されます。
 
 ## 5. 期待される出力例
 
@@ -92,4 +94,5 @@ checkpoint saved: checkpoints/moe.pt
 checkpoint loaded: checkpoints/moe.pt
 history csv saved: artifacts/train_history.csv
 history plot saved: artifacts/train_history.png
+routing heatmap saved: artifacts/digit_to_expert_routing.png
 ```
